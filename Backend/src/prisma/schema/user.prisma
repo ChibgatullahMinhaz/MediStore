@@ -1,0 +1,22 @@
+model User {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  emailVerified Boolean @default(false)
+  image     String?
+  password  String?
+  role      UserRole   @default(CUSTOMER)
+  status    UserStatus @default(ACTIVE)
+  phone     String?
+  address   String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  medicines Medicine[] // A seller can list multiple medicines
+  orders    Order[]    // A customer can place multiple orders
+  reviews   Review[]   // A customer can leave reviews
+  sessions  Session[]
+  accounts  Account[]
+
+  @@map("users")
+}
