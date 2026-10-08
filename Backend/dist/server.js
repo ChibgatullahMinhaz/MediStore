@@ -10,24 +10,58 @@ import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
 
 // src/config/env.ts
-import "dotenv/config";
-import { env as processEnv } from "process";
-var port = Number(processEnv.PORT ?? 3e3);
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error("PORT must be an integer between 1 and 65535");
-}
+import dotenv from "dotenv";
+dotenv.config();
 var env = {
-  PORT: port,
-  CLIENT_ORIGIN: processEnv.CLIENT_ORIGIN ?? "http://localhost:5173",
-  NODE_ENV: processEnv.NODE_ENV ?? "development"
+  NODE_ENV: process.env.NODE_ENV || "development",
+  PORT: Number(process.env.PORT) || 5e3,
+  DATABASE_URL: process.env.DATABASE_URL || "",
+  DIRECT_URL: process.env.DIRECT_URL || "",
+  APP_URL: process.env.APP_URL || "http://localhost:3000",
+  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET || "",
+  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL || "http://localhost:5000",
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || "",
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || "",
+  ADMIN: {
+    EMAIL: process.env.ADMIN_EMAIL || "",
+    PASSWORD: process.env.ADMIN_PASSWORD || "",
+    NAME: process.env.ADMIN_NAME || "Admin User"
+  },
+  R2: {
+    REGION: process.env.R2_REGION || "auto",
+    ENDPOINT: process.env.R2_ENDPOINT || "",
+    ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || "",
+    SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || "",
+    BUCKET: process.env.R2_BUCKET || "",
+    PRESIGNED_EXPIRES_IN: Number(process.env.R2_PRESIGNED_EXPIRES_IN) || 3600
+  }
 };
+if (!env.DATABASE_URL && env.NODE_ENV === "production") {
+  console.warn(
+    "\u26A0\uFE0F WARNING: DATABASE_URL is not defined in environment variables!"
+  );
+}
+if (!env.BETTER_AUTH_SECRET && env.NODE_ENV === "production") {
+  console.warn(
+    "\u26A0\uFE0F WARNING: BETTER_AUTH_SECRET is not defined in environment variables!"
+  );
+}
 
 // src/constants/origin.ts
-var trustedOrigins = [env.CLIENT_ORIGIN];
+var trustedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:8086",
+  "https://api.v1.ms-shop.store",
+  "https://ms-shop.store",
+  "https://admin.ms-shop.store",
+  "https://ms-shop-admin.web.app",
+  env.APP_URL
+].filter((origin, index, origins) => origins.indexOf(origin) === index);
 
 // src/lib/auth.ts
-import "dotenv/config";
-import { env as env3 } from "process";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 
@@ -42,6 +76,18 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import "@prisma/client/runtime/client";
 
+// src/generated/prisma/enums.ts
+var UserRole = {
+  ADMIN: "ADMIN",
+  SELLER: "SELLER",
+  CUSTOMER: "CUSTOMER"
+};
+var UserStatus = {
+  ACTIVE: "ACTIVE",
+  BLOCKED: "BLOCKED",
+  SUSPENDED: "SUSPENDED"
+};
+
 // src/generated/prisma/internal/class.ts
 import * as runtime from "@prisma/client/runtime/client";
 var config = {
@@ -49,7 +95,7 @@ var config = {
   "clientVersion": "7.10.0",
   "engineVersion": "0edf323efd1d98336f3f0a68684b56f689b900d3",
   "activeProvider": "postgresql",
-  "inlineSchema": 'model Session {\n  id        String   @id\n  expiresAt DateTime\n  token     String   @unique\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  ipAddress String?\n  userAgent String?\n  userId    String\n  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)\n\n  @@index([userId])\n  @@map("sessions")\n}\n\nmodel Account {\n  id                    String    @id\n  accountId             String\n  providerId            String\n  userId                String\n  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)\n  accessToken           String?\n  refreshToken          String?\n  idToken               String?\n  accessTokenExpiresAt  DateTime?\n  refreshTokenExpiresAt DateTime?\n  scope                 String?\n  password              String?\n  createdAt             DateTime  @default(now())\n  updatedAt             DateTime  @updatedAt\n\n  @@index([userId])\n  @@map("accounts")\n}\n\nmodel Verification {\n  id         String   @id\n  identifier String\n  value      String\n  expiresAt  DateTime\n  createdAt  DateTime @default(now())\n  updatedAt  DateTime @updatedAt\n\n  @@index([identifier])\n  @@map("verifications")\n}\n\nmodel Category {\n  id          String   @id @default(cuid())\n  name        String   @unique\n  slug        String   @unique\n  description String?\n  createdAt   DateTime @default(now())\n  updatedAt   DateTime @updatedAt\n\n  medicines Medicine[]\n\n  @@map("categories")\n}\n\nmodel Medicine {\n  id           String  @id @default(cuid())\n  name         String\n  manufacturer String\n  price        Float\n  stock        Int     @default(0)\n  description  String\n  imageUrl     String?\n  isOTC        Boolean @default(true) // Over-the-counter status\n\n  categoryId String\n  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)\n\n  sellerId String\n  seller   User   @relation(fields: [sellerId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  orderItems OrderItem[]\n  reviews    Review[]\n\n  @@map("medicines")\n}\n\nenum UserRole {\n  ADMIN\n  SELLER\n  CUSTOMER\n}\n\nenum UserStatus {\n  ACTIVE\n  BANNED\n}\n\nenum OrderStatus {\n  PLACED\n  PROCESSING\n  SHIPPED\n  DELIVERED\n  CANCELLED\n}\n\nenum PaymentStatus {\n  PENDING\n  PAID\n  FAILED\n}\n\nmodel Order {\n  id              String        @id @default(cuid())\n  totalAmount     Float\n  status          OrderStatus   @default(PLACED)\n  paymentStatus   PaymentStatus @default(PENDING)\n  shippingAddress String\n  contactPhone    String\n\n  customerId String\n  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  orderItems OrderItem[]\n\n  @@map("orders")\n}\n\nmodel OrderItem {\n  id       String @id @default(cuid())\n  quantity Int\n  price    Float // Product price at the time of order\n\n  orderId String\n  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)\n\n  medicineId String\n  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)\n\n  @@map("order_items")\n}\n\nmodel Review {\n  id      String @id @default(cuid())\n  rating  Int // 1 to 5\n  comment String\n\n  customerId String\n  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)\n\n  medicineId String\n  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  @@map("reviews")\n}\n\n// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\ngenerator client {\n  provider = "prisma-client"\n  output   = "../../generated/prisma"\n}\n\ndatasource db {\n  provider = "postgresql"\n}\n\nmodel User {\n  id            String     @id @default(cuid())\n  name          String\n  email         String     @unique\n  emailVerified Boolean    @default(false)\n  image         String?\n  password      String?\n  role          UserRole   @default(CUSTOMER)\n  status        UserStatus @default(ACTIVE)\n  phone         String?\n  address       String?\n  createdAt     DateTime   @default(now())\n  updatedAt     DateTime   @updatedAt\n\n  medicines Medicine[] // A seller can list multiple medicines\n  orders    Order[] // A customer can place multiple orders\n  reviews   Review[] // A customer can leave reviews\n  sessions  Session[]\n  accounts  Account[]\n\n  @@map("users")\n}\n',
+  "inlineSchema": 'model Session {\n  id        String   @id\n  expiresAt DateTime\n  token     String   @unique\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  ipAddress String?\n  userAgent String?\n  userId    String\n  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)\n\n  @@index([userId])\n  @@map("sessions")\n}\n\nmodel Account {\n  id                    String    @id\n  accountId             String\n  providerId            String\n  userId                String\n  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)\n  accessToken           String?\n  refreshToken          String?\n  idToken               String?\n  accessTokenExpiresAt  DateTime?\n  refreshTokenExpiresAt DateTime?\n  scope                 String?\n  password              String?\n  createdAt             DateTime  @default(now())\n  updatedAt             DateTime  @updatedAt\n\n  @@index([userId])\n  @@map("accounts")\n}\n\nmodel Verification {\n  id         String   @id\n  identifier String\n  value      String\n  expiresAt  DateTime\n  createdAt  DateTime @default(now())\n  updatedAt  DateTime @updatedAt\n\n  @@index([identifier])\n  @@map("verifications")\n}\n\nmodel Category {\n  id          String   @id @default(cuid())\n  name        String   @unique\n  slug        String   @unique\n  description String?\n  createdAt   DateTime @default(now())\n  updatedAt   DateTime @updatedAt\n\n  medicines Medicine[]\n\n  @@map("categories")\n}\n\nmodel Medicine {\n  id           String  @id @default(cuid())\n  name         String\n  manufacturer String\n  price        Float\n  stock        Int     @default(0)\n  description  String\n  imageUrl     String?\n  isOTC        Boolean @default(true) // Over-the-counter status\n\n  categoryId String\n  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)\n\n  sellerId String\n  seller   User   @relation(fields: [sellerId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  orderItems OrderItem[]\n  reviews    Review[]\n\n  @@map("medicines")\n}\n\nenum UserRole {\n  ADMIN\n  SELLER\n  CUSTOMER\n}\n\nenum UserStatus {\n  ACTIVE\n  BLOCKED\n  SUSPENDED\n}\n\nenum OrderStatus {\n  PLACED\n  PROCESSING\n  SHIPPED\n  DELIVERED\n  CANCELLED\n}\n\nenum PaymentStatus {\n  PENDING\n  PAID\n  FAILED\n}\n\nmodel Order {\n  id              String        @id @default(cuid())\n  totalAmount     Float\n  status          OrderStatus   @default(PLACED)\n  paymentStatus   PaymentStatus @default(PENDING)\n  shippingAddress String\n  contactPhone    String\n\n  customerId String\n  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  orderItems OrderItem[]\n\n  @@map("orders")\n}\n\nmodel OrderItem {\n  id       String @id @default(cuid())\n  quantity Int\n  price    Float // Product price at the time of order\n\n  orderId String\n  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)\n\n  medicineId String\n  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)\n\n  @@map("order_items")\n}\n\nmodel Review {\n  id      String @id @default(cuid())\n  rating  Int // 1 to 5\n  comment String\n\n  customerId String\n  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)\n\n  medicineId String\n  medicine   Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)\n\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  @@map("reviews")\n}\n\n// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\ngenerator client {\n  provider = "prisma-client"\n  output   = "../../generated/prisma"\n}\n\ndatasource db {\n  provider = "postgresql"\n}\n\nmodel User {\n  id            String     @id @default(cuid())\n  name          String\n  email         String     @unique\n  emailVerified Boolean    @default(false)\n  image         String?\n  password      String?\n  role          UserRole   @default(CUSTOMER)\n  status        UserStatus @default(ACTIVE)\n  phone         String?\n  address       String?\n  createdAt     DateTime   @default(now())\n  updatedAt     DateTime   @updatedAt\n\n  medicines Medicine[] // A seller can list multiple medicines\n  orders    Order[] // A customer can place multiple orders\n  reviews   Review[] // A customer can leave reviews\n  sessions  Session[]\n  accounts  Account[]\n\n  @@map("users")\n}\n',
   "runtimeDataModel": {
     "models": {},
     "enums": {},
@@ -283,28 +329,52 @@ var adapter = new PrismaPg({ connectionString });
 var prisma = new PrismaClient({ adapter });
 
 // src/lib/auth.ts
-var secret = env3.BETTER_AUTH_SECRET;
-if (!secret || secret.length < 32) {
-  throw new Error("BETTER_AUTH_SECRET must be set to at least 32 characters");
-}
-var googleClientId = env3.GOOGLE_CLIENT_ID;
-var googleClientSecret = env3.GOOGLE_CLIENT_SECRET;
+import { APIError } from "better-auth/api";
 var auth = betterAuth({
-  baseURL: env3.BETTER_AUTH_URL ?? "http://localhost:3000",
-  secret,
-  database: prismaAdapter(prisma, { provider: "postgresql" }),
-  emailAndPassword: {
-    enabled: true
-  },
-  ...googleClientId && googleClientSecret ? {
-    socialProviders: {
-      google: {
-        clientId: googleClientId,
-        clientSecret: googleClientSecret
+  database: prismaAdapter(prisma, {
+    provider: "postgresql"
+  }),
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const user = await prisma.user.findUnique({
+            where: { id: session.userId }
+          });
+          if (user?.status === UserStatus.BLOCKED || user?.status === UserStatus.SUSPENDED) {
+            throw new APIError("FORBIDDEN", {
+              message: `Your account has been ${user.status.toLowerCase()} by the admin.`
+            });
+          }
+        }
       }
     }
-  } : {},
-  trustedOrigins: [env3.CLIENT_ORIGIN ?? "http://localhost:5173"]
+  },
+  emailAndPassword: {
+    enabled: true,
+    autoSignIn: true,
+    requireEmailVerification: false
+  },
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET
+    }
+  },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: UserRole.CUSTOMER,
+        input: false
+      }
+    }
+  },
+  advanced: {
+    useSecureCookies: process.env.NODE_ENV === "production"
+    // crossSubDomainCookies: { enabled: true },
+  }
 });
 
 // src/errors/globalErrorHandler.ts
