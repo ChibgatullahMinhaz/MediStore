@@ -1,24 +1,37 @@
-import { createServer } from "node:http";
-import { env } from "node:process";
-import { toNodeHandler } from "better-auth/node";
-import { auth } from "./lib/auth";
+import { Server } from 'http';
+import app from './app';
+import { env } from './config/env';
 
-const authHandler = toNodeHandler(auth);
-const authPath = "/api/auth";
-const port = Number(env.PORT ?? 3000);
+let server: Server;
 
-const server = createServer((request, response) => {
-  const pathname = request.url?.split("?")[0];
-
-  if (pathname === authPath || pathname?.startsWith(`${authPath}/`)) {
-    void authHandler(request, response);
-    return;
+async function bootstrap() {
+  try {
+    server = app.listen(env.PORT, () => {
+      console.log(`🚀 Server listening on port ${env.PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
   }
+}
 
-  response.writeHead(404, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ error: "Not found" }));
+// Uncaught Exceptions (Synchronous Error Catching)
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception detected:', error);
+  process.exit(1);
 });
 
-server.listen(port, () => {
-  console.log(`Better Auth server listening on http://localhost:${port}`);
+// Unhandled Rejections (Asynchronous Error Catching)
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled Rejection detected, shutting down server...');
+  if (server) {
+    server.close(() => {
+      console.error(error);
+      process.exit(1);
+    });
+  } else {
+    process.exit(1);
+  }
 });
+
+bootstrap();

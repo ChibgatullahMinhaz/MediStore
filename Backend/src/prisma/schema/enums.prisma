@@ -6,7 +6,8 @@ enum UserRole {
 
 enum UserStatus {
   ACTIVE
-  BANNED
+  BLOCKED
+  SUSPENDED
 }
 
 enum OrderStatus {

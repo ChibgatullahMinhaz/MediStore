@@ -1,34 +1,59 @@
-import "dotenv/config";
-import { env } from "node:process";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
+// import { Role, UserStatus } from "@/prisma/generated/prisma/enums";
+import { APIError } from "better-auth/api";
+import { UserStatus } from "@/generated/prisma/enums";
 
-const secret = env.BETTER_AUTH_SECRET;
-
-if (!secret || secret.length < 32) {
-  throw new Error("BETTER_AUTH_SECRET must be set to at least 32 characters");
-}
-
-const googleClientId = env.GOOGLE_CLIENT_ID;
-const googleClientSecret = env.GOOGLE_CLIENT_SECRET;
 
 export const auth = betterAuth({
-  baseURL: env.BETTER_AUTH_URL ?? "http://localhost:3000",
-  secret,
-  database: prismaAdapter(prisma, { provider: "postgresql" }),
+  database: prismaAdapter(prisma, {
+    provider: "postgresql",
+  }),
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const user = await prisma.user.findUnique({
+            where: { id: session.userId },
+          });
+
+          if (
+            user?.status === UserStatus.BLOCKED ||
+            user?.status === UserStatus.SUSPENDED
+          ) {
+            throw new APIError("FORBIDDEN", {
+              message: `Your account has been ${user.status.toLowerCase()} by the admin.`,
+            });
+          }
+        },
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
+    autoSignIn: true,
+    requireEmailVerification: false,
   },
-  ...(googleClientId && googleClientSecret
-    ? {
-        socialProviders: {
-          google: {
-            clientId: googleClientId,
-            clientSecret: googleClientSecret,
-          },
-        },
-      }
-    : {}),
-  trustedOrigins: [env.CLIENT_ORIGIN ?? "http://localhost:5173"],
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID as string,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+    },
+  },
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: Role.CUSTOMER,
+        input: false,
+      },
+    },
+  },
+
+  advanced: {
+    useSecureCookies: process.env.NODE_ENV === "production",
+    // crossSubDomainCookies: { enabled: true },
+  },
 });
