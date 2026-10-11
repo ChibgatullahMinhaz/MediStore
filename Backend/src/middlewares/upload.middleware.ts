@@ -14,6 +14,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"]);
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB per file
+const MAX_LICENSE_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 // mimetype alone is client-supplied and spoofable, so cross-check it against the file extension
 function imageFileFilter(
@@ -38,8 +39,13 @@ export const imageUpload = multer({
     fileFilter: imageFileFilter,
 });
 
+export const licenseDocumentUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_LICENSE_DOCUMENT_SIZE_BYTES, files: 1 },
+});
+
 const MULTER_ERROR_MESSAGES: Record<string, string> = {
-    LIMIT_FILE_SIZE: `File too large. Maximum size is ${MAX_IMAGE_SIZE_BYTES / (1024 * 1024)}MB`,
+    LIMIT_FILE_SIZE: "File is too large for this upload",
     LIMIT_FILE_COUNT: "Too many files uploaded",
     LIMIT_UNEXPECTED_FILE: "Unexpected file field",
 };

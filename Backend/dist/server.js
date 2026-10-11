@@ -558,14 +558,354 @@ var notFound = (req, res) => {
 var notFound_default = notFound;
 
 // src/routes/index.ts
+import { Router as Router2 } from "express";
+
+// src/modules/user/user.route.ts
 import { Router } from "express";
-var entryRoutes = Router();
+
+// src/middlewares/auth.middleware.ts
+import httpStatus from "http-status";
+import { fromNodeHeaders } from "better-auth/node";
+
+// src/utils/catchAsync.ts
+var catchAsync = (fn) => {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+};
+
+// src/middlewares/auth.middleware.ts
+var attachActiveUser = async (req) => {
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers)
+  });
+  if (!session) {
+    return false;
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { id: true, role: true, status: true }
+  });
+  if (!user) {
+    return false;
+  }
+  if (user.status !== UserStatus.ACTIVE) {
+    throw new ApiError_default(
+      httpStatus.FORBIDDEN,
+      `Your account has been ${user.status.toLowerCase()} by the admin.`
+    );
+  }
+  req.user = user;
+  req.session = session.session;
+  return true;
+};
+var requireAuth = catchAsync(
+  async (req, _res, next) => {
+    const authenticated = await attachActiveUser(req);
+    if (!authenticated) {
+      throw new ApiError_default(
+        httpStatus.UNAUTHORIZED,
+        "You are not logged in. Please log in to get access."
+      );
+    }
+    next();
+  }
+);
+var optionalAuth = catchAsync(
+  async (req, _res, next) => {
+    await attachActiveUser(req);
+    next();
+  }
+);
+var requireRole = (...allowedRoles) => {
+  return (req, _res, next) => {
+    if (!req.user) {
+      return next(new ApiError_default(httpStatus.UNAUTHORIZED, "You are not logged in."));
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return next(new ApiError_default(httpStatus.FORBIDDEN, "Forbidden: You don't have permission to perform this action."));
+    }
+    next();
+  };
+};
+
+// src/middlewares/validateRequest.ts
+var validateRequest = (schema) => catchAsync(
+  async (req, res, next) => {
+    const parsed = await schema.parseAsync({
+      body: req.body,
+      query: req.query,
+      params: req.params,
+      cookies: req.cookies,
+      file: req.file,
+      files: req.files
+    });
+    if (parsed.body) req.body = parsed.body;
+    if (parsed.params) req.params = parsed.params;
+    if (parsed.cookies) req.cookies = parsed.cookies;
+    if (parsed.file) req.file = parsed.file;
+    if (parsed.files) req.files = parsed.files;
+    if (parsed.query) {
+      Object.defineProperty(req, "query", {
+        value: parsed.query,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      });
+    }
+    next();
+  }
+);
+
+// src/utils/sendResponse.ts
+var sendResponse = (res, data) => {
+  res.status(data.statusCode).json({
+    statusCode: data.statusCode,
+    success: data.success,
+    message: data.message,
+    meta: data.meta,
+    data: data.data ?? null
+  });
+};
+
+// src/modules/user/user.validation.ts
+import { z } from "zod";
+var userIdSchema = z.string().trim().min(1).max(128);
+var profileImageSchema = z.url().refine((image) => {
+  const protocol = new URL(image).protocol;
+  return protocol === "http:" || protocol === "https:";
+});
+var userIdParamsSchema = z.object({
+  params: z.object({ id: userIdSchema })
+});
+var updateProfileBodySchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(2).max(80).optional(),
+    phone: z.string().trim().regex(/^\+?[1-9]\d{6,14}$/, "Enter a valid phone number").nullable().optional(),
+    address: z.string().trim().min(1).max(500).nullable().optional(),
+    image: profileImageSchema.nullable().optional()
+  }).strict().refine((body) => Object.keys(body).length > 0, {
+    message: "Provide at least one profile field to update"
+  })
+});
+var updateUserStatusBodySchema = z.object({
+  params: z.object({ id: userIdSchema }),
+  body: z.object({
+    status: z.enum(UserStatus)
+  }).strict()
+});
+var pageQuerySchema = z.union([z.string().regex(/^\d+$/), z.number().int()]).transform(Number).pipe(z.number().int().min(1).max(1e6));
+var limitQuerySchema = z.union([z.string().regex(/^\d+$/), z.number().int()]).transform(Number).pipe(z.number().int().min(1).max(100));
+var listUsersQuerySchema = z.object({
+  page: pageQuerySchema.default(1),
+  limit: limitQuerySchema.default(20),
+  search: z.string().trim().min(1).max(100).optional(),
+  role: z.enum(UserRole).optional(),
+  status: z.enum(UserStatus).optional(),
+  sortBy: z.enum(["createdAt", "name"]).default("createdAt"),
+  sortOrder: z.enum(["asc", "desc"]).default("desc")
+}).strict();
+
+// src/modules/user/user.service.ts
+var publicUserSelect = {
+  id: true,
+  name: true,
+  email: true,
+  emailVerified: true,
+  image: true,
+  role: true,
+  status: true,
+  phone: true,
+  address: true,
+  createdAt: true,
+  updatedAt: true
+};
+var getProfile = async (userId) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: publicUserSelect
+  });
+  if (!user) {
+    throw new ApiError_default(404, "User not found");
+  }
+  return user;
+};
+var updateProfile = (userId, data) => prisma.user.update({
+  where: { id: userId },
+  data: {
+    ...data.name !== void 0 ? { name: data.name } : {},
+    ...data.phone !== void 0 ? { phone: data.phone } : {},
+    ...data.address !== void 0 ? { address: data.address } : {},
+    ...data.image !== void 0 ? { image: data.image } : {}
+  },
+  select: publicUserSelect
+});
+var listUsers = async (query) => {
+  const { page, limit, search, role, status, sortBy, sortOrder } = query;
+  const where = {
+    ...role ? { role } : {},
+    ...status ? { status } : {},
+    ...search ? {
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } }
+      ]
+    } : {}
+  };
+  const [users, totalCount] = await prisma.$transaction([
+    prisma.user.findMany({
+      where,
+      select: publicUserSelect,
+      orderBy: { [sortBy]: sortOrder },
+      skip: (page - 1) * limit,
+      take: limit
+    }),
+    prisma.user.count({ where })
+  ]);
+  return {
+    users,
+    meta: {
+      page,
+      limit,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limit),
+      hasMore: page * limit < totalCount
+    }
+  };
+};
+var updateUserStatus = async (adminId, targetUserId, data) => {
+  if (adminId === targetUserId) {
+    throw new ApiError_default(403, "You cannot change your own account status");
+  }
+  const existingUser = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true }
+  });
+  if (!existingUser) {
+    throw new ApiError_default(404, "User not found");
+  }
+  return prisma.user.update({
+    where: { id: targetUserId },
+    data: { status: data.status },
+    select: publicUserSelect
+  });
+};
+var userService = {
+  getProfile,
+  updateProfile,
+  listUsers,
+  updateUserStatus
+};
+
+// src/modules/user/user.controller.ts
+var authenticatedUserId = (req) => {
+  if (!req.user) {
+    throw new ApiError_default(401, "You are not logged in.");
+  }
+  return req.user.id;
+};
+var getMyProfile = catchAsync(async (req, res) => {
+  const user = await userService.getProfile(authenticatedUserId(req));
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Profile retrieved successfully",
+    data: user
+  });
+});
+var updateMyProfile = catchAsync(async (req, res) => {
+  const user = await userService.updateProfile(
+    authenticatedUserId(req),
+    updateProfileBodySchema.shape.body.parse(req.body)
+  );
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Profile updated successfully",
+    data: user
+  });
+});
+var listUsers2 = catchAsync(async (req, res) => {
+  const query = listUsersQuerySchema.parse(req.query);
+  const result = await userService.listUsers(query);
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Users retrieved successfully",
+    meta: result.meta,
+    data: result.users
+  });
+});
+var getUserById = catchAsync(async (req, res) => {
+  const { id: userId } = userIdParamsSchema.shape.params.parse(req.params);
+  const user = await userService.getProfile(userId);
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "User retrieved successfully",
+    data: user
+  });
+});
+var updateUserStatus2 = catchAsync(async (req, res) => {
+  const { id: userId } = updateUserStatusBodySchema.shape.params.parse(
+    req.params
+  );
+  const body = updateUserStatusBodySchema.shape.body.parse(req.body);
+  const user = await userService.updateUserStatus(
+    authenticatedUserId(req),
+    userId,
+    body
+  );
+  const action = body.status === UserStatus.ACTIVE ? "activated" : "status updated";
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: `User ${action} successfully`,
+    data: user
+  });
+});
+var userController = {
+  getMyProfile,
+  updateMyProfile,
+  listUsers: listUsers2,
+  getUserById,
+  updateUserStatus: updateUserStatus2
+};
+
+// src/modules/user/user.route.ts
+var userRouter = Router();
+var adminUserRouter = Router();
+userRouter.use(requireAuth);
+userRouter.get("/me", userController.getMyProfile);
+userRouter.patch(
+  "/me",
+  validateRequest(updateProfileBodySchema),
+  userController.updateMyProfile
+);
+adminUserRouter.use(requireAuth, requireRole(UserRole.ADMIN));
+adminUserRouter.get("/", userController.listUsers);
+adminUserRouter.get(
+  "/:id",
+  validateRequest(userIdParamsSchema),
+  userController.getUserById
+);
+adminUserRouter.patch(
+  "/:id/status",
+  validateRequest(updateUserStatusBodySchema),
+  userController.updateUserStatus
+);
+
+// src/routes/index.ts
+var entryRoutes = Router2();
 entryRoutes.get("/health", (_req, res) => {
   res.status(200).json({
     success: true,
     message: "MediStore API is running"
   });
 });
+entryRoutes.use("/users", userRouter);
+entryRoutes.use("/admin/users", adminUserRouter);
 var routes_default = entryRoutes;
 
 // src/app.ts

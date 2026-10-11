@@ -4,6 +4,8 @@ export interface ICursorMeta {
   prevCursor?: string | null;
   hasMore: boolean;
   totalCount?: number;
+  page?: number;
+  totalPages?: number;
 }
 
 export interface IApiResponse<T> {

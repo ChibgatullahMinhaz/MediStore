@@ -12,5 +12,7 @@ model Review {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([customerId, medicineId])
+  @@index([medicineId, createdAt])
   @@map("reviews")
 }

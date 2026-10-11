@@ -32,6 +32,7 @@ model Medicine {
 
   orderItems OrderItem[]
   reviews    Review[]
+  cartItems  CartItem[]
 
   @@map("medicines")
 }

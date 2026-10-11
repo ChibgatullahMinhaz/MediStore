@@ -22,7 +22,6 @@ export const validateRequest = (schema: ZodTypeAny): RequestHandler =>
       };
 
       if (parsed.body) req.body = parsed.body;
-      // if (parsed.query) req.query = parsed.query;
       if (parsed.params) req.params = parsed.params;
       if (parsed.cookies) req.cookies = parsed.cookies;
       if (parsed.file) req.file = parsed.file;

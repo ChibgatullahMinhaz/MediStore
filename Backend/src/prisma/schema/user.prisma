@@ -17,6 +17,30 @@ model User {
   reviews   Review[]   // A customer can leave reviews
   sessions  Session[]
   accounts  Account[]
+  cart      Cart?
+  sellerApplication SellerApplication?
+  reviewedSellerApplications SellerApplication[] @relation("SellerApplicationReviewer")
 
   @@map("users")
+}
+
+model SellerApplication {
+  id                   String                  @id @default(cuid())
+  userId               String                  @unique
+  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pharmacyName         String
+  licenseNumber        String
+  businessAddress      String
+  contactPhone         String
+  licenseDocumentKey   String
+  status               SellerApplicationStatus @default(PENDING)
+  reviewNote           String?
+  reviewedAt           DateTime?
+  reviewedById         String?
+  reviewedBy           User?                   @relation("SellerApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@index([status, createdAt])
+  @@map("seller_applications")
 }
